@@ -1,0 +1,28 @@
+# FreezeWatch runtime data: contains process names, paths and event-log text from the machine it ran on
+samples-*.log
+incidents/
+report.html
+*.etl
+*.log
+app/
+data/
+
+# Local tool settings and secrets
+.claude/settings.local.json
+.claude/
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+token*.json
+client_secret*.json
+credentials*.json
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
