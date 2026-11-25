@@ -87,7 +87,7 @@ foreach ($f in (Get-ChildItem $incDir -Filter 'incident-*.txt' -ErrorAction Sile
     $snapAfter = $after | Where-Object { $_ -like '# SNAP*' } | Select-Object -First 1
     $cpuTop = if ($snapAfter -match 'cpu-top: ([^|]*)\|') { $matches[1].Trim() } else { '' }
     $gpuTop = if ($snapAfter -match 'gpu-top: (.*?)(\(snapshot|$)') { $matches[1].Trim() } else { '' }
-    $evCount = @($lines | Where-Object { $_ -match '^(SYSTEM|APP)   ' }).Count
+    $evCount = @($lines | Where-Object { $_ -match '^(SYSTEM|APP) {2,}' }).Count   # the watcher pads both prefixes to 8 characters
     $notes = New-Object System.Collections.Generic.List[string]
     if ($pre -ge 5) { $notes.Add(('Interrupt+DPC load was already elevated before detection (peak {0:N1}%): points at a driver.' -f $pre)) }
     if ($preVdec -gt 0 -or $gpuTop -match 'VideoDecode') { $notes.Add('GPU video decode was active around this time.') }

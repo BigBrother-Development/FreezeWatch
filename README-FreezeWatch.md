@@ -45,7 +45,7 @@ Then run it without `-SelfTest` and leave the window open until the next freeze.
 
 In the summary, the driver to look at is the one with a high `Worst 1s %` (100 means one CPU core fully busy). To summarize an existing trace again: `.\Get-DpcSummary.ps1 -Path <file.etl>` (no admin needed).
 
-Limits: the trace logic and summary were tested without admin, using a stand-in for `wpr` and synthetic events. The `-SelfTest` run is the first real check. Traces contain process and driver names; do not share them without review.
+Limits: `-SelfTest` has passed on a real kernel trace. The storm and freeze triggers have only been tested with a stand-in for `wpr`. Traces contain process and driver names; do not share them without review.
 
 ## Older option: watcher `-Trace` (admin, heavy, untested)
 
