@@ -7,6 +7,7 @@ Lightweight background watcher for Windows that catches whole-system freezes and
 - `FreezeWatch.ps1`: the watcher (tray icon, logging, incident detection).
 - `New-FreezeWatchReport.ps1`: builds a self-contained HTML report (charts and an incident table) on demand.
 - `Install-FreezeWatch.ps1`: copies the scripts to `%USERPROFILE%\FreezeWatch\app`, registers a per-user Task Scheduler task that starts the watcher at logon, and starts it. `-Uninstall` removes the task and the scripts (logs are kept).
+- `Capture-DriverTrace.ps1`, `DriverLatency.wprp`, `Get-DpcSummary.ps1`: on-demand admin capture that names the driver behind a freeze (see below). Run from this folder; the installer does not copy them.
 
 ## Install and run
 
@@ -32,7 +33,23 @@ All output goes to `%USERPROFILE%\FreezeWatch\`:
 
 Reads Windows performance counters in bulk (a snapshot takes about 20 ms) and is driven by a single 1 s timer. Log files are about 8 MB per day and are pruned after 7 days (`-KeepDays`). The report generator runs only on demand, at BelowNormal priority.
 
-## Optional: driver-level trace (admin, heavy, untested)
+## Naming the driver (admin)
+
+From an elevated PowerShell (Run as administrator), first check that capture works (about 10 s of recording):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File F:\Workspace\FreezeWatch\Capture-DriverTrace.ps1 -SelfTest
+```
+
+Then run it without `-SelfTest` and leave the window open until the next freeze. It records DPC, interrupt and driver-load events into a 512 MB circular memory buffer. When interrupt + DPC time reaches 15% for 3 s, or its own loop stalls for more than 2.5 s, it waits 5 s, saves the buffer to `%USERPROFILE%\FreezeWatch\traces\trace-*.etl` and writes a `-dpc.txt` summary beside it. It takes up to 3 captures, one per episode (re-arms after 30 quiet seconds), and runs alongside the watcher. Stop it with Ctrl+C; if the window is closed instead, run `wpr -cancel` from an elevated prompt.
+
+In the summary, the driver to look at is the one with a high `Worst 1s %` (100 means one CPU core fully busy). To summarize an existing trace again: `.\Get-DpcSummary.ps1 -Path <file.etl>` (no admin needed).
+
+Limits: the trace logic and summary were tested without admin, using a stand-in for `wpr` and synthetic events. The `-SelfTest` run is the first real check. Traces contain process and driver names; do not share them without review.
+
+## Older option: watcher `-Trace` (admin, heavy, untested)
+
+Prefer the capture script above. From the code, saving a trace from inside the watcher's loop could itself register as a stall.
 
 ```powershell
 # from an elevated PowerShell
