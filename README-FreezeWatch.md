@@ -25,7 +25,7 @@ All output goes to `%USERPROFILE%\FreezeWatch\`:
 
 ## What counts as an incident
 
-- stall: its own 1 s loop took longer than 2.5 s (`-StallSec`). The whole machine was frozen, or at least this process was.
+- stall: its own 1 s loop took longer than 2.5 s (`-StallSec`). The whole machine was frozen, or at least this process was. There is no upper limit: a gap is ignored (logged as `RESUME-GAP`) only when the system was asleep or hibernating for part of it.
 - irqstorm: interrupt % + DPC % at or above 15 (`-IrqPct`) for 3 s (`-IrqSustainSec`).
 
 ## Overhead
@@ -51,6 +51,7 @@ Keeps a circular Windows Performance Recorder "Video" trace in memory (it includ
 ## Limits
 
 - A hard freeze stops this process too, so it sees the freeze afterwards, not during. The pre-freeze rows and post-freeze snapshot are the evidence.
+- If the machine never recovers and has to be reset, no incident file is written. The last rows of that day's sample log are the only record.
 - Without `-Trace` it cannot name the driver. It narrows the cause (interrupt vs DPC, GPU engine, process); the trace names the module.
 - Per-process GPU attribution has only been exercised with an idle GPU.
 

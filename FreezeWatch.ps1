@@ -57,6 +57,16 @@ $cDpc = New-Ctr '% DPC Time'
 $cIps = New-Ctr 'Interrupts/sec'
 $cDpr = New-Ctr 'DPC Rate'
 
+# ---------- awake clock ----------
+# Interrupt time that does not advance while the system is in sleep or hibernation (100 ns units).
+# Comparing it with the wall clock tells a long freeze apart from a resume from sleep.
+Add-Type -Namespace FreezeWatch -Name Native -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);'
+function Get-AwakeSec {
+    $t = [uint64]0
+    [void][FreezeWatch.Native]::QueryUnbiasedInterruptTime([ref]$t)
+    $t / 1e7
+}
+
 # ---------- log + ring buffer ----------
 $script:logDay = ''
 $script:logWriter = $null
@@ -266,7 +276,7 @@ function Initialize-Tray {
 
 # ---------- incidents ----------
 $script:inc = $null
-function Open-Incident([string]$kind, [string]$detail, [double]$nowSec) {
+function Open-Incident([string]$kind, [string]$detail, [double]$nowSec, [datetime]$since) {
     if ($script:inc) {
         $script:inc.EndAt = [Math]::Min($nowSec + $PostSec, $script:inc.HardEnd)
         [IO.File]::AppendAllText($script:inc.Path, ("{0:HH:mm:ss} + further trigger: {1} {2}`r`n" -f (Get-Date), $kind, $detail))
@@ -283,14 +293,15 @@ function Open-Incident([string]$kind, [string]$detail, [double]$nowSec) {
         '--- last ~2 minutes before detection (newest last) ---'
     ) + $ring.ToArray() + @('', '--- after detection ---')
     [IO.File]::WriteAllLines($path, $head)
-    $script:inc = @{ Path = $path; Kind = $kind; Start = $stamp; EndAt = $nowSec + $PostSec; HardEnd = $nowSec + 300 }
+    # event-log lookup starts 40 s before the last good tick, so a long freeze is covered from its beginning
+    $script:inc = @{ Path = $path; Kind = $kind; EventsFrom = $since.AddSeconds(-40); EndAt = $nowSec + $PostSec; HardEnd = $nowSec + 300 }
     Write-Host ('[{0:HH:mm:ss}] incident: {1} - {2}' -f $stamp, $kind, $detail)
     Send-Alert $kind $detail $path
 }
 function Close-Incident {
     $i = $script:inc
     $script:inc = $null
-    $ev = Get-IncidentEvents $i.Start.AddSeconds(-40) (Get-Date)
+    $ev = Get-IncidentEvents $i.EventsFrom (Get-Date)
     $tr = Save-WprTrace ($i.Path -replace 'incident-', 'trace-' -replace '\.txt$', '.etl')
     $tail = @('', '--- event log entries around the incident ---') + $ev + @('', "--- WPR trace: $tr ---")
     [IO.File]::AppendAllText($i.Path, ($tail -join "`r`n") + "`r`n")
@@ -319,16 +330,22 @@ $script:selfT0 = 0.0
 
 function Invoke-Tick {
     $now = $script:sw.Elapsed.TotalSeconds
+    $utc = [datetime]::UtcNow
+    $awake = Get-AwakeSec
+    $slept = ($utc - $script:prevUtc).TotalSeconds - ($awake - $script:prevAwake)
+    $since = $script:prevUtc.ToLocalTime()
+    $script:prevUtc = $utc; $script:prevAwake = $awake
     # interval since the last tick, minus the time we spent on our own snapshot work, so the
-    # snapshot cost is never mistaken for a system stall
-    $dt = ($now - $script:prev) - $script:lastWork
+    # snapshot cost is not mistaken for a system stall. The allowance is capped (snapshots normally
+    # take well under 0.2 s) so a freeze that hits during a snapshot is still counted.
+    $dt = ($now - $script:prev) - [Math]::Min($script:lastWork, 0.5)
     $script:prev = $now
     $script:tick++
     if ($dt -lt 0) { $dt = 0 }
     if ($RunSeconds -gt 0 -and $now -gt $RunSeconds) { Stop-Watcher; return }
 
     $int = $cInt.NextValue(); $dpc = $cDpc.NextValue(); $ips = $cIps.NextValue(); $dpr = $cDpr.NextValue()
-    $resume = $dt -gt 120
+    $resume = $slept -gt 5   # the machine was asleep; any length of freeze while awake still counts
     $stall = (-not $resume) -and ($dt -gt $StallSec)
     if (($int + $dpc) -ge $IrqPct) { $script:irqRun++ } else { $script:irqRun = 0 }
 
@@ -347,8 +364,8 @@ function Invoke-Tick {
         (Get-Date), ($dt * 1000), $int, $dpc, $ips, $dpr, $g3, $gv, $gc, $(if ($resume) { '  RESUME-GAP(ignored)' } elseif ($stall) { '  STALL' } else { '' })
 
     # triggers first so the row itself lands in the incident file as the first "after" line
-    if ($stall) { Open-Incident 'stall' ('loop gap {0:N1}s (expected 1s); counters below are averaged over the gap' -f $dt) $now }
-    elseif ($script:irqRun -ge $IrqSustainSec) { Open-Incident 'irqstorm' ('interrupt+DPC {0:N1}% for {1}+ s' -f ($int + $dpc), $script:irqRun) $now }
+    if ($stall) { Open-Incident 'stall' ('loop gap {0:N1}s (expected 1s); counters below are averaged over the gap' -f $dt) $now $since }
+    elseif ($script:irqRun -ge $IrqSustainSec) { Open-Incident 'irqstorm' ('interrupt+DPC {0:N1}% for {1}+ s' -f ($int + $dpc), $script:irqRun) $now $since }
 
     Add-Line $row
     if ($snapLine) { Add-Line $snapLine }
@@ -372,6 +389,8 @@ Write-Host "FreezeWatch running. Logs: $OutDir"
 [void](Read-Procs); [void](Read-Gpu)
 $script:selfCpu0 = $script:selfProc.TotalProcessorTime.TotalSeconds
 $script:prev = $script:sw.Elapsed.TotalSeconds
+$script:prevUtc = [datetime]::UtcNow
+$script:prevAwake = Get-AwakeSec
 $script:selfT0 = $script:prev; $script:lastSelf = $script:prev; $script:lastHouse = $script:prev
 
 try {
